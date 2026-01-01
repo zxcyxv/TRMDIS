@@ -1,0 +1,11 @@
+open_track1/
+.trm_dis_cache/
+.venv/
+**/__pycache__/
+**/.ipynb_checkpoints/
+trm_dis/outputs/
+Test3/open_track1/
+Test3/__pycache__/
+Test3/router_diagnosis.png
+Test3/router_grid_heatmap.png
+.cache/
