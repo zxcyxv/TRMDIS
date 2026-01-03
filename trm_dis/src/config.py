@@ -10,7 +10,7 @@ class ModelConfig:
     """Model configuration for TRM+DIS architecture"""
 
     # Data parameters
-    max_seq_len: int = 16           # Maximum sequence length (last N actions)
+    max_seq_len: int = 8            # Maximum sequence length (last N actions)
     field_x_max: float = 105.0      # Field width in meters
     field_y_max: float = 68.0       # Field height in meters
 
@@ -31,11 +31,27 @@ class ModelConfig:
     n: int = 4                      # Internal latent updates per supervision step
 
     # Diffusion parameters
-    diffusion_type: Literal["linear"] = "linear"  # Linear interpolation schedule
+    diffusion_type: Literal["linear", "gaussian", "hybrid"] = "gaussian"
+    hybrid_noise_scale: float = 0.05    # Noise scale for hybrid diffusion (training only)
+    gaussian_sigma_init: float = 0.3    # Initial sigma for gaussian diffusion
+    gaussian_sigma_final: float = 0.0   # Final sigma for gaussian diffusion
+
+    # Spectral Normalization (for contraction mapping)
+    use_spectral_norm: bool = True      # Apply spectral norm to attention/FFN layers
+
+    # Dynamic Stopping Gate (prevent oscillation near target)
+    use_dynamic_stopping: bool = True   # Enable dynamic stopping gate
+    stopping_threshold: float = 0.02    # Normalized distance threshold
+    stopping_kappa: float = 20.0        # Gate sigmoid steepness
+
+    # Gaussian Denoising Training (PDF 제안)
+    use_denoising_training: bool = True     # 학습 시 입력에 노이즈 주입
+    denoising_sigma_init: float = 0.1       # 초기 노이즈 스케일 (초기 단계)
+    denoising_sigma_final: float = 0.01     # 최종 노이즈 스케일 (후반 단계)
 
     # Training parameters
     batch_size: int = 64
-    learning_rate: float = 1e-4
+    learning_rate: float = 2e-4
     weight_decay: float = 0.1
     ema_decay: float = 0.999
     max_epochs: int = 100
@@ -45,7 +61,15 @@ class ModelConfig:
     adam_eps: float = 1e-8
     grad_clip_norm: float = 1.0
 
-    # Loss weights (AL-GPI)
+    # Loss function selection
+    use_ctri_loss: bool = True      # Use CTRI loss (False = use AL-GPI)
+
+    # CTRI Loss parameters (PDF 제안 반영)
+    ctri_lambda_mono: float = 1.0           # Monotonic improvement constraint weight
+    ctri_lambda_trust: float = 0.1          # Kinetic/Trust penalty weight
+    ctri_gamma: float = 0.95                # 감쇠 계수 γ ≤ 1 (PDF 제안)
+
+    # AL-GPI Loss weights (used when use_ctri_loss=False)
     huber_delta: float = 1.0        # Huber loss delta for cpf slack
     adv_margin: float = 0.01        # Minimum projected progress margin
     adv_weight: float = 1.0         # Weight for advantage margin term
@@ -53,24 +77,26 @@ class ModelConfig:
     work_eta: float = 2.0           # Exponential sharpness for work term
     work_eps: float = 0.012         # Distance threshold for work gating
     work_kappa: float = 10.0        # Gating steepness for work term
+
+    # Anisotropic distance weights (shared by both loss functions)
     x_weight: float = 2.38          # Anisotropic distance weight for x (105/68)^2
     y_weight: float = 1.0           # Anisotropic distance weight for y
 
     # Data paths
-    train_csv_path: str = "/workspace/open_track1/train.csv"
-    test_csv_path: str = "/workspace/open_track1/test.csv"
-    test_dir_path: str = "/workspace/open_track1/test"
-    sample_submission_path: str = "/workspace/open_track1/sample_submission.csv"
-    cond_feature_path: str = "/workspace/Test3/open_track1/film_smoe_cond_features.npz"
-    use_cond_features: bool = True
-    cond_dim: int = 196  # cls_out(128) + fourier_seq(64) + router_logits(4)
+    train_csv_path: str = "/workspace/TRMDIS/open_track1/train.csv"
+    test_csv_path: str = "/workspace/TRMDIS/open_track1/test.csv"
+    test_dir_path: str = "/workspace/TRMDIS/open_track1/test"
+    sample_submission_path: str = "/workspace/TRMDIS/open_track1/sample_submission.csv"
+    cond_feature_path: str = "/workspace/TRMDIS/Test3/open_track1/film_smoe_cond_features.npz"
+    use_cond_features: bool = False
+    cond_dim: int = 132  # cls_out(128) + router_logits(4)
     use_cls_only: bool = False
     cls_dim: int = 128
 
     # Output paths
-    checkpoint_dir: str = "/workspace/trm_dis/outputs/checkpoints"
-    log_dir: str = "/workspace/trm_dis/outputs/logs"
-    submission_path: str = "/workspace/trm_dis/outputs/submission.csv"
+    checkpoint_dir: str = "/workspace/TRMDIS/trm_dis/outputs/checkpoints"
+    log_dir: str = "/workspace/TRMDIS/trm_dis/outputs/logs"
+    submission_path: str = "/workspace/TRMDIS/trm_dis/outputs/submission.csv"
 
     # Device
     device: str = "cuda"            # cuda or cpu

@@ -18,7 +18,7 @@ from typing import Optional, Dict, List
 import json
 
 from ..models.ema import EMA
-from .loss import CombinedLoss
+from .loss import CombinedLoss, CTRILoss
 from .optimizers import AdamAtan
 
 
@@ -53,18 +53,32 @@ class Trainer:
         # Learning rate scheduler (warmup + cosine decay)
         self.scheduler = self._create_scheduler()
 
-        # Loss function
-        self.criterion = CombinedLoss(
-            huber_delta=config.huber_delta,
-            adv_margin=config.adv_margin,
-            adv_weight=config.adv_weight,
-            work_weight=config.work_weight,
-            work_eta=config.work_eta,
-            work_eps=config.work_eps,
-            work_kappa=config.work_kappa,
-            x_weight=config.x_weight,
-            y_weight=config.y_weight
-        )
+        # Loss function selection
+        self.use_ctri_loss = getattr(config, 'use_ctri_loss', False)
+        if self.use_ctri_loss:
+            self.criterion = CTRILoss(
+                lambda_mono=config.ctri_lambda_mono,
+                lambda_trust=config.ctri_lambda_trust,
+                gamma=getattr(config, 'ctri_gamma', 0.95),
+                x_weight=config.x_weight,
+                y_weight=config.y_weight
+            )
+            print(f"Using CTRILoss (lambda_mono={config.ctri_lambda_mono}, "
+                  f"lambda_trust={config.ctri_lambda_trust}, "
+                  f"gamma={getattr(config, 'ctri_gamma', 0.95)})")
+        else:
+            self.criterion = CombinedLoss(
+                huber_delta=config.huber_delta,
+                adv_margin=config.adv_margin,
+                adv_weight=config.adv_weight,
+                work_weight=config.work_weight,
+                work_eta=config.work_eta,
+                work_eps=config.work_eps,
+                work_kappa=config.work_kappa,
+                x_weight=config.x_weight,
+                y_weight=config.y_weight
+            )
+            print("Using AL-GPI CombinedLoss")
 
         # EMA
         self.ema = EMA(model, decay=config.ema_decay) if hasattr(config, 'ema_decay') else None
@@ -223,6 +237,9 @@ class Trainer:
         total_coord_loss = 0.0
         total_dir_loss = 0.0
         total_work_loss = 0.0
+        total_mono_loss = 0.0
+        total_trust_loss = 0.0
+        total_mono_violation_rate = 0.0
         num_batches = 0
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}")
@@ -236,13 +253,13 @@ class Trainer:
             cls_out = batch.get('cls_out')
             if cls_out is not None:
                 cls_out = cls_out.to(self.device)
-            cond_seq = batch.get('cond_seq')
-            if cond_seq is not None:
-                cond_seq = cond_seq.to(self.device)
+            cond_vec = batch.get('cond_vec')
+            if cond_vec is not None:
+                cond_vec = cond_vec.to(self.device)
 
             # Forward
             outputs = self.model(
-                continuous, categorical, mask, targets, cls_out=cls_out, cond_seq=cond_seq
+                continuous, categorical, mask, targets, cls_out=cls_out, cond_vec=cond_vec
             )
 
             # Loss
@@ -273,20 +290,41 @@ class Trainer:
             num_batches += 1
             self.global_step += 1
 
-            pbar.set_postfix({
-                'loss': f"{loss_dict['total'].item():.4f}",
-                'coord': f"{loss_dict['coord'].item():.4f}",
-                'dir': f"{loss_dict['direction'].item():.4f}",
-                'work': f"{loss_dict['work'].item():.4f}",
-                'lr': f"{self.scheduler.get_last_lr()[0]:.2e}"
-            })
+            # CTRI-specific metrics
+            if self.use_ctri_loss:
+                total_mono_loss += loss_dict.get('mono', torch.tensor(0.0)).item()
+                total_trust_loss += loss_dict.get('trust', torch.tensor(0.0)).item()
+                total_mono_violation_rate += loss_dict.get('mono_violation_rate', torch.tensor(0.0)).item()
+                pbar.set_postfix({
+                    'loss': f"{loss_dict['total'].item():.4f}",
+                    'coord': f"{loss_dict['coord'].item():.4f}",
+                    'mono': f"{loss_dict['mono'].item():.4f}",
+                    'trust': f"{loss_dict['trust'].item():.4f}",
+                    'lr': f"{self.scheduler.get_last_lr()[0]:.2e}"
+                })
+            else:
+                pbar.set_postfix({
+                    'loss': f"{loss_dict['total'].item():.4f}",
+                    'coord': f"{loss_dict['coord'].item():.4f}",
+                    'dir': f"{loss_dict['direction'].item():.4f}",
+                    'work': f"{loss_dict['work'].item():.4f}",
+                    'lr': f"{self.scheduler.get_last_lr()[0]:.2e}"
+                })
 
-        return {
+        result = {
             'loss': total_loss / num_batches,
             'coord_loss': total_coord_loss / num_batches,
             'dir_loss': total_dir_loss / num_batches,
             'work_loss': total_work_loss / num_batches
         }
+
+        # Add CTRI-specific metrics
+        if self.use_ctri_loss:
+            result['mono_loss'] = total_mono_loss / num_batches
+            result['trust_loss'] = total_trust_loss / num_batches
+            result['mono_violation_rate'] = total_mono_violation_rate / num_batches
+
+        return result
 
     @torch.no_grad()
     def validate(self, use_ema: bool = True) -> dict:
@@ -309,6 +347,9 @@ class Trainer:
         total_coord_loss = 0.0
         total_dir_loss = 0.0
         total_work_loss = 0.0
+        total_mono_loss = 0.0
+        total_trust_loss = 0.0
+        total_mono_violation_rate = 0.0
         total_mae_x = 0.0
         total_mae_y = 0.0
         total_euclidean = 0.0
@@ -331,13 +372,13 @@ class Trainer:
             cls_out = batch.get('cls_out')
             if cls_out is not None:
                 cls_out = cls_out.to(self.device)
-            cond_seq = batch.get('cond_seq')
-            if cond_seq is not None:
-                cond_seq = cond_seq.to(self.device)
+            cond_vec = batch.get('cond_vec')
+            if cond_vec is not None:
+                cond_vec = cond_vec.to(self.device)
 
             # Forward (note: in eval mode, diff_targets won't be generated)
             outputs = self.model(
-                continuous, categorical, mask, targets=None, cls_out=cls_out, cond_seq=cond_seq
+                continuous, categorical, mask, targets=None, cls_out=cls_out, cond_vec=cond_vec
             )
 
             # Generate diffusion targets manually for validation loss
@@ -355,6 +396,12 @@ class Trainer:
             total_coord_loss += loss_dict['coord'].item()
             total_dir_loss += loss_dict['direction'].item()
             total_work_loss += loss_dict['work'].item()
+
+            # CTRI-specific metrics
+            if self.use_ctri_loss:
+                total_mono_loss += loss_dict.get('mono', torch.tensor(0.0)).item()
+                total_trust_loss += loss_dict.get('trust', torch.tensor(0.0)).item()
+                total_mono_violation_rate += loss_dict.get('mono_violation_rate', torch.tensor(0.0)).item()
 
             # Compute DIS-specific metrics
             dis_metrics = self.compute_dis_metrics(outputs['predictions'], targets)
@@ -423,7 +470,7 @@ class Trainer:
             'monotonic_violations': total_monotonic_violations
         }
 
-        return {
+        result = {
             'loss': total_loss / num_batches,
             'coord_loss': total_coord_loss / num_batches,
             'dir_loss': total_dir_loss / num_batches,
@@ -434,6 +481,14 @@ class Trainer:
             'euclidean': total_euclidean / num_batches,
             'dis_metrics': dis_metrics_avg
         }
+
+        # Add CTRI-specific metrics
+        if self.use_ctri_loss:
+            result['mono_loss'] = total_mono_loss / num_batches
+            result['trust_loss'] = total_trust_loss / num_batches
+            result['mono_violation_rate'] = total_mono_violation_rate / num_batches
+
+        return result
 
     def save_checkpoint(self, filename: str, is_best: bool = False):
         """Save model checkpoint"""
@@ -500,8 +555,18 @@ class Trainer:
             print(f"\nEpoch {epoch}:")
             print(f"  Train Loss: {train_metrics['loss']:.4f}")
             print(f"  Val Loss: {val_metrics['loss']:.4f}")
-            print(f"  Train Work Loss: {train_metrics['work_loss']:.4f}")
-            print(f"  Val Work Loss: {val_metrics['work_loss']:.4f}")
+
+            # Log loss-specific metrics
+            if self.use_ctri_loss:
+                print(f"  Train Mono Loss: {train_metrics.get('mono_loss', 0):.4f}")
+                print(f"  Train Trust Loss: {train_metrics.get('trust_loss', 0):.4f}")
+                print(f"  Val Mono Loss: {val_metrics.get('mono_loss', 0):.4f}")
+                print(f"  Val Trust Loss: {val_metrics.get('trust_loss', 0):.4f}")
+                print(f"  Mono Violation Rate: {val_metrics.get('mono_violation_rate', 0):.1%}")
+            else:
+                print(f"  Train Work Loss: {train_metrics['work_loss']:.4f}")
+                print(f"  Val Work Loss: {val_metrics['work_loss']:.4f}")
+
             print(f"  Val MAE (avg): {val_metrics['mae_avg']:.2f}m")
             print(f"  Val Euclidean: {val_metrics['euclidean']:.2f}m")
 

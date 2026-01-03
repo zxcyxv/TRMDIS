@@ -32,11 +32,16 @@ class SwiGLU(nn.Module):
     Used in feedforward networks
     """
 
-    def __init__(self, dim: int, hidden_dim: int):
+    def __init__(self, dim: int, hidden_dim: int, use_spectral_norm: bool = False):
         super().__init__()
-        self.w = nn.Linear(dim, hidden_dim, bias=False)
-        self.v = nn.Linear(dim, hidden_dim, bias=False)
-        self.out_proj = nn.Linear(hidden_dim, dim, bias=False)
+        if use_spectral_norm:
+            self.w = nn.utils.spectral_norm(nn.Linear(dim, hidden_dim, bias=False))
+            self.v = nn.utils.spectral_norm(nn.Linear(dim, hidden_dim, bias=False))
+            self.out_proj = nn.utils.spectral_norm(nn.Linear(hidden_dim, dim, bias=False))
+        else:
+            self.w = nn.Linear(dim, hidden_dim, bias=False)
+            self.v = nn.Linear(dim, hidden_dim, bias=False)
+            self.out_proj = nn.Linear(hidden_dim, dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.out_proj(F.silu(self.w(x)) * self.v(x))
@@ -110,17 +115,24 @@ class MultiHeadAttention(nn.Module):
     Multi-head attention with RoPE
     """
 
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1,
+                 use_spectral_norm: bool = False):
         super().__init__()
         assert d_model % n_heads == 0
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
 
-        self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.k_proj = nn.Linear(d_model, d_model, bias=False)
-        self.v_proj = nn.Linear(d_model, d_model, bias=False)
-        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        if use_spectral_norm:
+            self.q_proj = nn.utils.spectral_norm(nn.Linear(d_model, d_model, bias=False))
+            self.k_proj = nn.utils.spectral_norm(nn.Linear(d_model, d_model, bias=False))
+            self.v_proj = nn.utils.spectral_norm(nn.Linear(d_model, d_model, bias=False))
+            self.out_proj = nn.utils.spectral_norm(nn.Linear(d_model, d_model, bias=False))
+        else:
+            self.q_proj = nn.Linear(d_model, d_model, bias=False)
+            self.k_proj = nn.Linear(d_model, d_model, bias=False)
+            self.v_proj = nn.Linear(d_model, d_model, bias=False)
+            self.out_proj = nn.Linear(d_model, d_model, bias=False)
 
         self.dropout = nn.Dropout(dropout)
         self.scale = self.head_dim ** -0.5
@@ -181,13 +193,14 @@ class TransformerLayer(nn.Module):
     Single Transformer layer with RMSNorm and SwiGLU
     """
 
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1,
+                 use_spectral_norm: bool = False):
         super().__init__()
         self.attn_norm = RMSNorm(d_model)
-        self.attn = MultiHeadAttention(d_model, n_heads, dropout)
+        self.attn = MultiHeadAttention(d_model, n_heads, dropout, use_spectral_norm)
 
         self.ff_norm = RMSNorm(d_model)
-        self.ff = SwiGLU(d_model, d_ff)
+        self.ff = SwiGLU(d_model, d_ff, use_spectral_norm)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -229,7 +242,8 @@ class TransformerBackbone(nn.Module):
         n_heads: int = 8,
         d_ff: int = 1024,
         dropout: float = 0.1,
-        max_seq_len: int = 16
+        max_seq_len: int = 16,
+        use_spectral_norm: bool = False
     ):
         super().__init__()
         self.d_model = d_model
@@ -241,7 +255,7 @@ class TransformerBackbone(nn.Module):
 
         # Transformer layers
         self.layers = nn.ModuleList([
-            TransformerLayer(d_model, n_heads, d_ff, dropout)
+            TransformerLayer(d_model, n_heads, d_ff, dropout, use_spectral_norm)
             for _ in range(n_layers)
         ])
 

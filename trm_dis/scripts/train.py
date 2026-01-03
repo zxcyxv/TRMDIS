@@ -2,7 +2,8 @@
 Main training script for TRM+DIS model
 """
 import sys
-sys.path.insert(0, '/workspace/trm_dis')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 import pandas as pd
@@ -162,7 +163,18 @@ def main(args):
         cls_dim=config.model.cls_dim,
         use_cls_only=config.model.use_cls_only,
         use_cond_features=config.model.use_cond_features,
-        cond_dim=config.model.cond_dim
+        cond_dim=config.model.cond_dim,
+        use_spectral_norm=config.model.use_spectral_norm,
+        use_dynamic_stopping=config.model.use_dynamic_stopping,
+        stopping_threshold=config.model.stopping_threshold,
+        stopping_kappa=config.model.stopping_kappa,
+        use_denoising_training=config.model.use_denoising_training,
+        denoising_sigma_init=config.model.denoising_sigma_init,
+        denoising_sigma_final=config.model.denoising_sigma_final,
+        diffusion_type=config.model.diffusion_type,
+        hybrid_noise_scale=config.model.hybrid_noise_scale,
+        gaussian_sigma_init=config.model.gaussian_sigma_init,
+        gaussian_sigma_final=config.model.gaussian_sigma_final
     )
 
     print(f"Model parameters: {model.get_num_params():,}")

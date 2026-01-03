@@ -89,31 +89,20 @@ class EpisodeDataset(Dataset):
         if self.cond_features is not None:
             cond_pack = self.cond_features.get(str(episode['episode_id']))
             if cond_pack is not None:
-                fourier_seq = cond_pack['fourier_seq']
                 cls_out = cond_pack['cls_out']
                 router_logits = cond_pack['router_logits']
-                cond_seq = self._build_cond_seq(fourier_seq, cls_out, router_logits)
-                result['cond_seq'] = torch.from_numpy(cond_seq)
+                cond_vec = self._build_cond_vec(cls_out, router_logits)
+                result['cond_vec'] = torch.from_numpy(cond_vec)
 
         return result
 
-    def _build_cond_seq(
+    def _build_cond_vec(
         self,
-        fourier_seq: 'np.ndarray',  # [K, 64]
         cls_out: 'np.ndarray',      # [128]
         router_logits: 'np.ndarray' # [4]
     ) -> 'np.ndarray':
-        """Build per-step conditioning sequence aligned to max_seq_len."""
-        k = fourier_seq.shape[0]
-        cond_dim = fourier_seq.shape[1] + cls_out.shape[0] + router_logits.shape[0]
-        cond_seq = np.zeros((self.encoder.max_seq_len, cond_dim), dtype=np.float32)
-        pad_len = max(self.encoder.max_seq_len - k, 0)
-        fourier_trim = fourier_seq[-self.encoder.max_seq_len:] if k > self.encoder.max_seq_len else fourier_seq
-        cls_rep = np.repeat(cls_out[None, :], fourier_trim.shape[0], axis=0)
-        router_rep = np.repeat(router_logits[None, :], fourier_trim.shape[0], axis=0)
-        merged = np.concatenate([cls_rep, fourier_trim, router_rep], axis=1).astype(np.float32)
-        cond_seq[pad_len:pad_len + merged.shape[0]] = merged
-        return cond_seq
+        """Build global conditioning vector (CLS + router logits)."""
+        return np.concatenate([cls_out, router_logits], axis=0).astype(np.float32)
 
 
 class TestEpisodeDataset(Dataset):
@@ -125,7 +114,9 @@ class TestEpisodeDataset(Dataset):
         self,
         test_df: pd.DataFrame,
         encoder: EpisodeEncoder,
-        test_dir: str = "/workspace/open_track1/test"
+        test_dir: str = "/workspace/open_track1/test",
+        cls_features: Optional[Dict[str, 'np.ndarray']] = None,
+        cond_features: Optional[Dict[str, 'np.ndarray']] = None
     ):
         """
         Args:
@@ -136,6 +127,8 @@ class TestEpisodeDataset(Dataset):
         self.test_df = test_df.reset_index(drop=True)
         self.encoder = encoder
         self.test_dir = test_dir
+        self.cls_features = cls_features
+        self.cond_features = cond_features
 
         print(f"Loaded {len(self.test_df)} test episodes")
 
@@ -163,12 +156,35 @@ class TestEpisodeDataset(Dataset):
         # Encode (no target for test data)
         encoded = self.encoder.encode_episode(episode_df, include_target=False)
 
-        return {
+        result = {
             'continuous': torch.from_numpy(encoded['continuous']),
             'categorical': torch.from_numpy(encoded['categorical']),
             'mask': torch.from_numpy(encoded['mask']),
             'episode_id': episode_id
         }
+
+        if self.cls_features is not None:
+            cls_vec = self.cls_features.get(str(episode_id))
+            if cls_vec is not None:
+                result['cls_out'] = torch.from_numpy(cls_vec)
+
+        if self.cond_features is not None:
+            cond_pack = self.cond_features.get(str(episode_id))
+            if cond_pack is not None:
+                cls_out = cond_pack['cls_out']
+                router_logits = cond_pack['router_logits']
+                cond_vec = self._build_cond_vec(cls_out, router_logits)
+                result['cond_vec'] = torch.from_numpy(cond_vec)
+
+        return result
+
+    def _build_cond_vec(
+        self,
+        cls_out: 'np.ndarray',      # [128]
+        router_logits: 'np.ndarray' # [4]
+    ) -> 'np.ndarray':
+        """Build global conditioning vector (CLS + router logits)."""
+        return np.concatenate([cls_out, router_logits], axis=0).astype(np.float32)
 
 
 def create_train_val_split(

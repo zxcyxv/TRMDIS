@@ -97,7 +97,13 @@ class CombinedLoss(nn.Module):
 
         move_norm = self._dist_sigma(delta).clamp_min(1e-6)
         work_ratio = move_norm / to_goal_norm
-        gate = torch.sigmoid(self.work_kappa * (to_goal_norm / self.work_eps - 1.0))
+
+        # Dynamic tolerance gating: compare current error to step-specific target ρ_s
+        # If already within target (to_goal_norm < rho), gate → 0 (work term vanishes)
+        # If beyond target (to_goal_norm > rho), gate → 1 (enforce movement)
+        error_ratio = to_goal_norm / (rho + 1e-6)  # [B, n_sup]
+        gate = torch.sigmoid(self.work_kappa * (error_ratio - 1.0))
+
         work_loss = gate * torch.exp(-self.work_eta * work_ratio)
         early_weights = torch.flip(step_weights, dims=[0])
         work_loss = (work_loss * early_weights).sum() / (early_weights.sum() * work_loss.size(0))
@@ -123,6 +129,135 @@ class CombinedLoss(nn.Module):
     def _huber_zero(self, x: torch.Tensor) -> torch.Tensor:
         """Huber loss to zero with no reduction."""
         return F.huber_loss(x, torch.zeros_like(x), delta=self.huber_delta, reduction='none')
+
+
+class CTRILoss(nn.Module):
+    """
+    Contractive Trust Region Improvement Loss (PDF 제안 반영)
+
+    L_CTRI = sum_s omega_s * (
+        ||y_s - y*||^2                           # Coordinate loss (Task Accuracy)
+        + lambda_mono * R(y_s, y_{s-1}, y*)      # Monotonic improvement constraint
+        + lambda_trust * ||y_s - y_{s-1}||^2    # Kinetic/Trust penalty
+    )
+
+    R(y_s, y_{s-1}, y*) = ReLU(||y_s - y*|| - γ||y_{s-1} - y*||)
+    → γ ≤ 1: 감쇠 계수. 이전 오차의 γ배 이하로 줄어야 함을 강제
+    → "확신이 없다면 최소한 이전 위치를 유지(Identity Mapping)"하도록 강제
+
+    Design principles:
+    1. Monotonic contraction: Error must decrease by factor γ at each step
+    2. Kinetic penalty: Limit step size to prevent overshoot (브레이크 역할)
+    3. Step-wise weighting: Later steps have higher weight (ω_s = s²)
+    """
+
+    def __init__(
+        self,
+        lambda_mono: float = 1.0,
+        lambda_trust: float = 0.1,
+        gamma: float = 0.95,  # 감쇠 계수 (PDF 제안: γ ≤ 1)
+        x_weight: float = 2.38,
+        y_weight: float = 1.0
+    ):
+        super().__init__()
+        self.lambda_mono = lambda_mono
+        self.lambda_trust = lambda_trust
+        self.gamma = gamma  # 단조 개선 감쇠 계수
+        self.x_weight = x_weight
+        self.y_weight = y_weight
+
+    def _aniso_dist(self, v: torch.Tensor) -> torch.Tensor:
+        """Anisotropic distance with field scaling."""
+        return torch.sqrt(v[..., 0] ** 2 * self.x_weight + v[..., 1] ** 2 * self.y_weight + 1e-8)
+
+    def forward(
+        self,
+        predictions: torch.Tensor,  # [B, n_sup, 2]
+        targets: torch.Tensor,      # [B, n_sup, 2]
+        y_init: torch.Tensor = None # [B, 2] - Initial prediction (optional)
+    ) -> dict:
+        """
+        Compute CTRI loss
+
+        Args:
+            predictions: [B, n_sup, 2] - Predictions at each supervision step
+            targets: [B, n_sup, 2] - Diffusion targets (y* is targets[:, -1, :])
+            y_init: [B, 2] - Initial prediction (if None, derived from targets)
+
+        Returns:
+            Dictionary with loss components
+        """
+        B, n_sup, _ = predictions.shape
+        device = predictions.device
+
+        # Ground truth is the final target
+        y_true = targets[:, -1, :]  # [B, 2]
+
+        # Derive y_init if not provided (from linear interpolation formula)
+        if y_init is None:
+            if n_sup == 1:
+                y_init = y_true.clone()
+            else:
+                alpha1 = 1.0 / n_sup
+                y_init = (targets[:, 0, :] - alpha1 * y_true) / (1.0 - alpha1 + 1e-8)
+
+        # Step weights: later steps have higher weight (ω_s = s^2 / sum(s^2))
+        step_indices = torch.arange(1, n_sup + 1, dtype=torch.float32, device=device)
+        step_weights = step_indices ** 2
+        step_weights = step_weights / step_weights.sum()
+
+        # Build y_prev: [y_init, y_1, y_2, ..., y_{n_sup-1}]
+        y_prev = torch.cat([y_init.unsqueeze(1), predictions[:, :-1, :]], dim=1)  # [B, n_sup, 2]
+
+        # ================================================================
+        # 1. Coordinate Loss: ||y_s - y*||^2
+        # ================================================================
+        coord_errors = self._aniso_dist(predictions - y_true.unsqueeze(1))  # [B, n_sup]
+        coord_loss_per_step = coord_errors ** 2  # [B, n_sup]
+        coord_loss = (coord_loss_per_step * step_weights).sum(dim=1).mean()
+
+        # ================================================================
+        # 2. Monotonic Improvement Constraint (PDF 제안):
+        # R = ReLU(||y_s - y*|| - γ||y_{s-1} - y*||)
+        # γ ≤ 1: 이전 오차의 γ배 이하로 줄어야 함을 강제
+        # ================================================================
+        dist_curr = self._aniso_dist(predictions - y_true.unsqueeze(1))  # [B, n_sup]
+        dist_prev = self._aniso_dist(y_prev - y_true.unsqueeze(1))       # [B, n_sup]
+
+        # Penalize when current error > γ * previous error
+        # γ < 1이면 더 강한 수축 요구 (매 단계 γ배 이하로 줄어야 함)
+        mono_violation = F.relu(dist_curr - self.gamma * dist_prev)  # [B, n_sup]
+        mono_loss = (mono_violation * step_weights).sum(dim=1).mean()
+
+        # Compute violation rate for monitoring
+        mono_violation_rate = (mono_violation > 1e-6).float().mean()
+
+        # ================================================================
+        # 3. Kinetic/Trust Penalty (PDF 제안): ||y_s - y_{s-1}||^2
+        # 모든 이동에 페널티 부과 (브레이크 역할)
+        # 초기 단계의 큰 가중치가 후반부에서 오버슈트를 일으키지 않도록 제어
+        # ================================================================
+        step_move = self._aniso_dist(predictions - y_prev)  # [B, n_sup]
+
+        # 단순 운동 에너지 페널티: ||y_s - y_{s-1}||^2
+        kinetic_loss = step_move ** 2  # [B, n_sup]
+        trust_loss = (kinetic_loss * step_weights).sum(dim=1).mean()
+
+        # ================================================================
+        # 4. Total Loss
+        # ================================================================
+        total_loss = coord_loss + self.lambda_mono * mono_loss + self.lambda_trust * trust_loss
+
+        return {
+            'total': total_loss,
+            'coord': coord_loss,
+            'mono': mono_loss,
+            'trust': trust_loss,
+            'mono_violation_rate': mono_violation_rate,
+            # For compatibility with trainer
+            'direction': mono_loss,
+            'work': trust_loss
+        }
 
 
 class CoordinateLoss(nn.Module):
