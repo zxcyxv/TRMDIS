@@ -172,18 +172,18 @@ def main() -> None:
                 categorical = batch["categorical"].to(device)
                 mask = batch["mask"].to(device)
                 cls_out = batch.get("cls_out")
-                cond_vec = batch.get("cond_vec")
+                cond_seq = batch.get("cond_seq")
                 if cls_out is not None:
                     cls_out = cls_out.to(device)
-                if cond_vec is not None:
-                    cond_vec = cond_vec.to(device)
+                if cond_seq is not None:
+                    cond_seq = cond_seq.to(device)
 
                 outputs = model(
                     continuous,
                     categorical,
                     mask,
                     cls_out=cls_out,
-                    cond_vec=cond_vec,
+                    cond_seq=cond_seq,
                 )
                 coords = outputs["final_pred"].cpu().numpy()
                 preds.append(coords)

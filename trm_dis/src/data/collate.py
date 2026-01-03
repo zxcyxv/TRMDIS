@@ -45,8 +45,8 @@ def collate_episodes(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
         cls_out = torch.stack([item['cls_out'] for item in batch])
         result['cls_out'] = cls_out
 
-    if 'cond_vec' in batch[0]:
-        cond_vec = torch.stack([item['cond_vec'] for item in batch])
-        result['cond_vec'] = cond_vec
+    if 'cond_seq' in batch[0]:
+        cond_seq = torch.stack([item['cond_seq'] for item in batch])
+        result['cond_seq'] = cond_seq
 
     return result

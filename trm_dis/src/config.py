@@ -10,7 +10,7 @@ class ModelConfig:
     """Model configuration for TRM+DIS architecture"""
 
     # Data parameters
-    max_seq_len: int = 8            # Maximum sequence length (last N actions)
+    max_seq_len: int = 16           # Maximum sequence length (last N actions)
     field_x_max: float = 105.0      # Field width in meters
     field_y_max: float = 68.0       # Field height in meters
 
@@ -31,7 +31,7 @@ class ModelConfig:
     n: int = 4                      # Internal latent updates per supervision step
 
     # Diffusion parameters
-    diffusion_type: Literal["linear", "gaussian", "hybrid"] = "gaussian"
+    diffusion_type: Literal["linear", "gaussian", "hybrid"] = "hybrid"
     hybrid_noise_scale: float = 0.05    # Noise scale for hybrid diffusion (training only)
     gaussian_sigma_init: float = 0.3    # Initial sigma for gaussian diffusion
     gaussian_sigma_final: float = 0.0   # Final sigma for gaussian diffusion
@@ -51,7 +51,7 @@ class ModelConfig:
 
     # Training parameters
     batch_size: int = 64
-    learning_rate: float = 2e-4
+    learning_rate: float = 1e-4
     weight_decay: float = 0.1
     ema_decay: float = 0.999
     max_epochs: int = 100
@@ -88,8 +88,8 @@ class ModelConfig:
     test_dir_path: str = "/workspace/TRMDIS/open_track1/test"
     sample_submission_path: str = "/workspace/TRMDIS/open_track1/sample_submission.csv"
     cond_feature_path: str = "/workspace/TRMDIS/Test3/open_track1/film_smoe_cond_features.npz"
-    use_cond_features: bool = False
-    cond_dim: int = 132  # cls_out(128) + router_logits(4)
+    use_cond_features: bool = True
+    cond_dim: int = 196  # cls_out(128) + fourier_seq(64) + router_logits(4)
     use_cls_only: bool = False
     cls_dim: int = 128
 

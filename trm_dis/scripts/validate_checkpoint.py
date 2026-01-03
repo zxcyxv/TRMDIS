@@ -60,6 +60,10 @@ def build_model(config: ModelConfig) -> TRMDIS:
         use_denoising_training=config.use_denoising_training,
         denoising_sigma_init=config.denoising_sigma_init,
         denoising_sigma_final=config.denoising_sigma_final,
+        diffusion_type=getattr(config, "diffusion_type", "linear"),
+        hybrid_noise_scale=getattr(config, "hybrid_noise_scale", 0.05),
+        gaussian_sigma_init=getattr(config, "gaussian_sigma_init", 0.3),
+        gaussian_sigma_final=getattr(config, "gaussian_sigma_final", 0.0),
     )
 
 
@@ -107,6 +111,8 @@ def main() -> None:
     has_stop_gate = any(k.startswith("stop_gate_proj") for k in state_dict.keys())
     config.use_spectral_norm = has_spectral_norm
     config.use_dynamic_stopping = has_stop_gate
+    if "diffusion.noise_weights" not in state_dict:
+        config.diffusion_type = "linear"
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = args.batch_size or config.batch_size

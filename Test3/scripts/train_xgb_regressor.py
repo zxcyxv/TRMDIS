@@ -25,6 +25,7 @@ def get_feature_columns(df):
 def main() -> None:
     df_k8 = pd.read_csv(K8_PATH)
     df_gate = pd.read_csv(GATE_PATH)
+    pca_path = Path(DATA_DIR) / "cls_pca_train.csv"
 
     if "game_episode" not in df_gate.columns:
         raise KeyError("xgb_hybrid_features.csv must include game_episode for merge.")
@@ -34,6 +35,11 @@ def main() -> None:
     df = df_k8.merge(df_gate[gate_cols], on="game_episode", how="left")
     if df["router_gate"].isna().any():
         raise ValueError("router_gate has missing values after merge.")
+    if pca_path.exists():
+        df_pca = pd.read_csv(pca_path)
+        df = df.merge(df_pca, on="game_episode", how="left")
+        if df_pca.drop(columns=["game_episode"]).isna().any().any():
+            raise ValueError("PCA features contain NaNs.")
 
     feature_cols = get_feature_columns(df)
     if "router_gate" not in feature_cols:
@@ -89,8 +95,8 @@ def main() -> None:
     full_y.fit(X, y_y, verbose=False)
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    full_x.save_model(str(MODEL_DIR / "xgb_full_x.json"))
-    full_y.save_model(str(MODEL_DIR / "xgb_full_y.json"))
+    full_x.get_booster().save_model(str(MODEL_DIR / "xgb_full_x.json"))
+    full_y.get_booster().save_model(str(MODEL_DIR / "xgb_full_y.json"))
     (MODEL_DIR / "feature_columns.txt").write_text("\n".join(feature_cols))
 
     importances = full_x.feature_importances_

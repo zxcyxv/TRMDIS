@@ -253,13 +253,13 @@ class Trainer:
             cls_out = batch.get('cls_out')
             if cls_out is not None:
                 cls_out = cls_out.to(self.device)
-            cond_vec = batch.get('cond_vec')
-            if cond_vec is not None:
-                cond_vec = cond_vec.to(self.device)
+            cond_seq = batch.get('cond_seq')
+            if cond_seq is not None:
+                cond_seq = cond_seq.to(self.device)
 
             # Forward
             outputs = self.model(
-                continuous, categorical, mask, targets, cls_out=cls_out, cond_vec=cond_vec
+                continuous, categorical, mask, targets, cls_out=cls_out, cond_seq=cond_seq
             )
 
             # Loss
@@ -372,13 +372,13 @@ class Trainer:
             cls_out = batch.get('cls_out')
             if cls_out is not None:
                 cls_out = cls_out.to(self.device)
-            cond_vec = batch.get('cond_vec')
-            if cond_vec is not None:
-                cond_vec = cond_vec.to(self.device)
+            cond_seq = batch.get('cond_seq')
+            if cond_seq is not None:
+                cond_seq = cond_seq.to(self.device)
 
             # Forward (note: in eval mode, diff_targets won't be generated)
             outputs = self.model(
-                continuous, categorical, mask, targets=None, cls_out=cls_out, cond_vec=cond_vec
+                continuous, categorical, mask, targets=None, cls_out=cls_out, cond_seq=cond_seq
             )
 
             # Generate diffusion targets manually for validation loss

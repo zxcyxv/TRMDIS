@@ -20,10 +20,16 @@ def get_feature_columns(df):
 def main() -> None:
     test_k8 = pd.read_csv(DATA_DIR / "test_features_k8.csv")
     gate_df = pd.read_csv(DATA_DIR / "xgb_hybrid_features_test.csv")
+    pca_path = DATA_DIR / "cls_pca_test.csv"
 
     df = test_k8.merge(gate_df, on="game_episode", how="left")
     if df["router_gate"].isna().any():
         raise ValueError("router_gate has missing values after merge.")
+    if pca_path.exists():
+        df_pca = pd.read_csv(pca_path)
+        df = df.merge(df_pca, on="game_episode", how="left")
+        if df_pca.drop(columns=["game_episode"]).isna().any().any():
+            raise ValueError("PCA features contain NaNs.")
 
     feature_cols_path = MODEL_DIR / "feature_columns.txt"
     if feature_cols_path.exists():

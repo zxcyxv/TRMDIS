@@ -68,7 +68,7 @@ class TRMDIS(nn.Module):
         cls_dim: int = 128,
         use_cls_only: bool = False,
         use_cond_features: bool = False,
-        cond_dim: int = 132,
+        cond_dim: int = 196,
         # Stability improvements
         use_spectral_norm: bool = False,
         use_dynamic_stopping: bool = False,
@@ -108,24 +108,7 @@ class TRMDIS(nn.Module):
 
         # Optional CLS-only input projection
         self.cls_proj = nn.Linear(cls_dim, d_model)
-
-        def _linear(in_dim: int, out_dim: int) -> nn.Linear:
-            layer = nn.Linear(in_dim, out_dim)
-            return nn.utils.spectral_norm(layer) if use_spectral_norm else layer
-
-        # FiLM modulation from global condition (CLS + router logits)
-        self.film_mlp = nn.Sequential(
-            _linear(cond_dim, d_model),
-            nn.GELU(),
-            _linear(d_model, d_model * 2)
-        )
-
-        last = self.film_mlp[-1]
-        weight = getattr(last, "weight_orig", last.weight)
-        nn.init.zeros_(weight)
-        if last.bias is not None:
-            last.bias.data.zero_()
-            last.bias.data[:d_model] = 1.0
+        self.cond_proj = nn.Linear(cond_dim, d_model)
 
         # Diffusion target generator
         if diffusion_type == "gaussian":
@@ -204,7 +187,7 @@ class TRMDIS(nn.Module):
         mask: torch.Tensor,         # [B, seq_len]
         targets: torch.Tensor = None,  # [B, 2] - ground truth (training only)
         cls_out: torch.Tensor = None,  # [B, cls_dim] - optional CLS features
-        cond_vec: torch.Tensor = None  # [B, cond_dim] - optional conditioning vector
+        cond_seq: torch.Tensor = None  # [B, seq_len, cond_dim] - optional conditioning features
     ) -> dict:
         """
         Forward pass
@@ -228,10 +211,9 @@ class TRMDIS(nn.Module):
         h = self.embedding(continuous, categorical)  # [B, seq_len, d_model]
         if self.use_cls_only and cls_out is not None:
             h = self.cls_proj(cls_out).unsqueeze(1).expand(B, seq_len, self.d_model)
-        gamma = beta = None
-        if self.use_cond_features and cond_vec is not None:
-            gamma_beta = self.film_mlp(cond_vec)
-            gamma, beta = gamma_beta.chunk(2, dim=-1)
+        if self.use_cond_features and cond_seq is not None:
+            cond = self.cond_proj(cond_seq)
+            h = h + cond
 
         # KEEP SEQUENCE DIMENSION! (NO mean pooling)
         # h: [B, seq_len, d_model]
@@ -295,10 +277,7 @@ class TRMDIS(nn.Module):
             # z ← f_θ(h + y_noisy + z + step_emb) - ADDITION with step awareness
             # y_noisy: 학습 시 노이즈 주입된 y (추론 시에는 y와 동일)
             for i in range(self.n):
-                z_in = h + y_noisy + z + step_emb
-                if gamma is not None and beta is not None:
-                    z_in = gamma.unsqueeze(1) * z_in + beta.unsqueeze(1)
-                z_new = self.f_theta(z_in, mask)  # [B, seq_len, d_model]
+                z_new = self.f_theta(h + y_noisy + z + step_emb, mask)  # [B, seq_len, d_model]
 
                 # ============================================================
                 # Dynamic Stopping Gate (PDF 제안: z_s 기반 tanh 게이팅)
@@ -316,10 +295,7 @@ class TRMDIS(nn.Module):
             # Answer refinement (WITHOUT input x, WITH step_emb)
             # y ← f_θ(y_noisy + z + step_emb) - naturally excludes input
             # y_noisy: 학습 시 노이즈 주입된 y (디노이징 학습)
-            y_in = y_noisy + z + step_emb
-            if gamma is not None and beta is not None:
-                y_in = gamma.unsqueeze(1) * y_in + beta.unsqueeze(1)
-            y_new = self.f_theta(y_in, mask)  # [B, seq_len, d_model]
+            y_new = self.f_theta(y_noisy + z + step_emb, mask)  # [B, seq_len, d_model]
 
             # ============================================================
             # Dynamic Stopping Gate for y update (PDF 제안)

@@ -234,11 +234,11 @@ def main() -> None:
                 categorical = batch["categorical"].to(device)
                 mask = batch["mask"].to(device)
                 cls_out = batch.get("cls_out")
-                cond_vec = batch.get("cond_vec")
+                cond_seq = batch.get("cond_seq")
                 if cls_out is not None:
                     cls_out = cls_out.to(device)
-                if cond_vec is not None:
-                    cond_vec = cond_vec.to(device)
+                if cond_seq is not None:
+                    cond_seq = cond_seq.to(device)
 
                 print(f"\nBatch {batches_done}")
                 _print_stats("continuous", _tensor_stats(continuous))
@@ -246,17 +246,17 @@ def main() -> None:
                 _print_stats("mask", _tensor_stats(mask))
                 if cls_out is not None:
                     _print_stats("cls_out", _tensor_stats(cls_out))
-                if cond_vec is not None:
-                    _print_stats("cond_vec", _tensor_stats(cond_vec))
+                if cond_seq is not None:
+                    _print_stats("cond_seq", _tensor_stats(cond_seq))
                 else:
-                    print("cond_vec                  MISSING")
+                    print("cond_seq                  MISSING")
 
                 outputs = model(
                     continuous,
                     categorical,
                     mask,
                     cls_out=cls_out,
-                    cond_vec=cond_vec,
+                    cond_seq=cond_seq,
                 )
                 preds = outputs["predictions"]
                 final_pred = outputs["final_pred"]
