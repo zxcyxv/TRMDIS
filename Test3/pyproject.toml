@@ -1,0 +1,19 @@
+[project]
+name = "test3"
+version = "0.1.0"
+description = "Mitra regression pipeline for TRMDIS"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=1.25.0,<2.4.0",
+    "pandas>=2.0.0,<2.3.0",
+    "scikit-learn>=1.4.0,<1.8.0",
+    "torch>=2.0.0",
+    "xgboost>=2.0.0",
+    "autogluon.tabular[mitra]",
+    "hf-transfer>=0.1.9",
+    "tabpfn>=6.2.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.10.0"]
+build-backend = "uv_build"

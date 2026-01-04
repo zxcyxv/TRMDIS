@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import pandas as pd
 import torch
@@ -18,10 +19,25 @@ TEMPERATURE = 0.05
 
 
 def main() -> None:
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {MODEL_PATH}")
+    parser = argparse.ArgumentParser(description="Extract router features for test set.")
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=MODEL_PATH,
+        help="Checkpoint path (default: open_track1/film_smoe_transformer.pt)",
+    )
+    parser.add_argument(
+        "--out-path",
+        type=Path,
+        default=DATA_DIR / "xgb_hybrid_features_test.csv",
+        help="Output CSV path",
+    )
+    args = parser.parse_args()
 
-    checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
+    if not args.model_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {args.model_path}")
+
+    checkpoint = torch.load(args.model_path, map_location="cpu", weights_only=False)
 
     df = pd.read_csv(DATA_DIR / "test_features_v2.csv")
     X, _ = prepare_sequence_data(df)
@@ -59,9 +75,8 @@ def main() -> None:
     for i in range(zone_logits_feat.shape[1]):
         out_df[f"router_zone_logit_{i}"] = zone_logits_feat[:, i]
 
-    out_path = DATA_DIR / "xgb_hybrid_features_test.csv"
-    out_df.to_csv(out_path, index=False)
-    print(f"Saved: {out_path} ({len(out_df)} rows)")
+    out_df.to_csv(args.out_path, index=False)
+    print(f"Saved: {args.out_path} ({len(out_df)} rows)")
 
 
 if __name__ == "__main__":

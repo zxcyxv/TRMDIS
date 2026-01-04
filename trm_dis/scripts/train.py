@@ -35,6 +35,8 @@ def main(args):
     # Load config
     config = ExperimentConfig()
     config.model.device = args.device
+    if args.cond_features_path:
+        config.model.cond_feature_path = args.cond_features_path
 
     if args.debug:
         config.debug_mode = True
@@ -75,12 +77,17 @@ def main(args):
     encoder.save_vocab(f"{config.model.checkpoint_dir}/vocab.json")
 
     # Split train/val
-    print("Creating train/val split...")
-    train_df, val_df = create_train_val_split(
-        df,
-        val_episodes=config.model.val_episodes,
-        seed=config.seed
-    )
+    if args.full_train:
+        print("Full-train mode: using all episodes for both train/val loaders.")
+        train_df = df
+        val_df = df
+    else:
+        print("Creating train/val split...")
+        train_df, val_df = create_train_val_split(
+            df,
+            val_episodes=config.model.val_episodes,
+            seed=config.seed
+        )
 
     # Load CLS features if provided
     cls_features = None
@@ -107,6 +114,10 @@ def main(args):
             }
             for i, eid in enumerate(ids)
         }
+        # Check for missing episode IDs
+        missing = set(df['game_episode'].astype(str)) - set(cond_features.keys())
+        if missing:
+            print(f"WARNING: {len(missing)} episodes missing cond_features. Example: {next(iter(missing))}")
 
     # Create datasets
     print("Creating datasets...")
@@ -203,6 +214,10 @@ if __name__ == '__main__':
                         help='Device (cuda or cpu)')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (small subset)')
+    parser.add_argument('--full-train', action='store_true',
+                        help='Use all episodes for training (val loader uses full data)')
+    parser.add_argument('--cond-features-path', type=str, default=None,
+                        help='Override conditional features .npz path')
 
     args = parser.parse_args()
 

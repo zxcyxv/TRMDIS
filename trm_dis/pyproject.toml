@@ -1,15 +1,14 @@
 [project]
-name = "open-track1"
+name = "trm-dis"
 version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.14"
+description = "TRM+DIS model for soccer action prediction"
+requires-python = ">=3.12"
 dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "tqdm>=4.65.0",
+    "scikit-learn>=1.3.0",
     "matplotlib>=3.10.8",
-    "numpy>=2.4.0",
-    "pandas>=2.3.3",
-    "pypdf>=6.5.0",
-    "scikit-learn>=1.8.0",
-    "torch>=2.9.1",
-    "tqdm>=4.67.1",
     "xgboost>=3.1.2",
 ]

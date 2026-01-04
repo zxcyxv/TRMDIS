@@ -9,3 +9,5 @@ Test3/__pycache__/
 Test3/router_diagnosis.png
 Test3/router_grid_heatmap.png
 .cache/
+Test3/models/tabpfn_*.pkl
+Test3/models/tabpfn_*.pkl

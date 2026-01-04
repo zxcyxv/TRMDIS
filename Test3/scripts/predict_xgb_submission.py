@@ -19,8 +19,9 @@ def get_feature_columns(df):
 
 def main() -> None:
     test_k8 = pd.read_csv(DATA_DIR / "test_features_k8.csv")
-    gate_df = pd.read_csv(DATA_DIR / "xgb_hybrid_features_test.csv")
-    pca_path = DATA_DIR / "cls_pca_test.csv"
+    gate_df = pd.read_csv(DATA_DIR / "xgb_hybrid_features_test_fold3.csv")
+    pca_path = DATA_DIR / "cls_pca_test_oof.csv"
+    sample_path = DATA_DIR / "sample_submission.csv"
 
     df = test_k8.merge(gate_df, on="game_episode", how="left")
     if df["router_gate"].isna().any():
@@ -54,6 +55,10 @@ def main() -> None:
         "end_x": pred_x,
         "end_y": pred_y,
     })
+
+    if sample_path.exists():
+        sample_ids = pd.read_csv(sample_path)["game_episode"]
+        submission = submission.set_index("game_episode").reindex(sample_ids).reset_index()
     out_path = DATA_DIR / "submission_xgb_hybrid.csv"
     submission.to_csv(out_path, index=False)
     print(f"Saved: {out_path}")

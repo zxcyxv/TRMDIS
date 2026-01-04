@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.model_selection import KFold
+from sklearn.model_selection import train_test_split
 
 
 from pathlib import Path
@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = str(ROOT_DIR / "open_track1")
 MODEL_DIR = ROOT_DIR / "models"
 K8_PATH = f"{DATA_DIR}/train_features_k8.csv"
-GATE_PATH = f"{DATA_DIR}/xgb_hybrid_features_oof.csv"
+GATE_PATH = f"{DATA_DIR}/xgb_hybrid_features.csv"
 
 
 def euclidean_distance(y_true_x, y_true_y, y_pred_x, y_pred_y):
@@ -25,7 +25,7 @@ def get_feature_columns(df):
 def main() -> None:
     df_k8 = pd.read_csv(K8_PATH)
     df_gate = pd.read_csv(GATE_PATH)
-    pca_path = Path(DATA_DIR) / "cls_pca_train_oof.csv"
+    pca_path = Path(DATA_DIR) / "cls_pca_train.csv"
 
     if "game_episode" not in df_gate.columns:
         raise KeyError("xgb_hybrid_features.csv must include game_episode for merge.")
@@ -40,13 +40,24 @@ def main() -> None:
         df = df.merge(df_pca, on="game_episode", how="left")
         if df_pca.drop(columns=["game_episode"]).isna().any().any():
             raise ValueError("PCA features contain NaNs.")
+        print(f"Loaded {len(df_pca.columns) - 1} PCA features")
 
     feature_cols = get_feature_columns(df)
     if "router_gate" not in feature_cols:
         feature_cols.append("router_gate")
+
+    print(f"Total features: {len(feature_cols)}")
+
     X = df[feature_cols]
     y_x = df["target_end_x"].values
     y_y = df["target_end_y"].values
+
+    # 80/20 split
+    print("\nTraining XGBoost with 80/20 split...")
+    X_train, X_val, yx_train, yx_val, yy_train, yy_val = train_test_split(
+        X, y_x, y_y, test_size=0.2, random_state=42
+    )
+    print(f"  Train: {len(X_train)} samples, Val: {len(X_val)} samples")
 
     params = {
         "objective": "reg:absoluteerror",
@@ -61,30 +72,20 @@ def main() -> None:
         "verbosity": 0,
     }
 
-    print("OOF training with 5 folds...")
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
-    oof_pred_x = np.zeros(len(X))
-    oof_pred_y = np.zeros(len(X))
+    print("\n  Training XGBoost for end_x...")
+    model_x = xgb.XGBRegressor(**params)
+    model_x.fit(X_train, yx_train, eval_set=[(X_val, yx_val)], verbose=False)
 
-    for fold, (tr_idx, val_idx) in enumerate(kf.split(X)):
-        X_tr, X_val = X.iloc[tr_idx], X.iloc[val_idx]
-        yx_tr, yx_val = y_x[tr_idx], y_x[val_idx]
-        yy_tr, yy_val = y_y[tr_idx], y_y[val_idx]
+    print("  Training XGBoost for end_y...")
+    model_y = xgb.XGBRegressor(**params)
+    model_y.fit(X_train, yy_train, eval_set=[(X_val, yy_val)], verbose=False)
 
-        model_x = xgb.XGBRegressor(**params)
-        model_y = xgb.XGBRegressor(**params)
+    print("  Predicting on validation set...")
+    val_pred_x = model_x.predict(X_val)
+    val_pred_y = model_y.predict(X_val)
 
-        model_x.fit(X_tr, yx_tr, eval_set=[(X_val, yx_val)], verbose=False)
-        model_y.fit(X_tr, yy_tr, eval_set=[(X_val, yy_val)], verbose=False)
-
-        oof_pred_x[val_idx] = model_x.predict(X_val)
-        oof_pred_y[val_idx] = model_y.predict(X_val)
-
-        fold_dist = euclidean_distance(yx_val, yy_val, oof_pred_x[val_idx], oof_pred_y[val_idx])
-        print(f"  Fold {fold}: dist={fold_dist:.4f}m")
-
-    oof_dist = euclidean_distance(y_x, y_y, oof_pred_x, oof_pred_y)
-    print(f"\n[OOF Result] Distance: {oof_dist:.4f}m")
+    val_dist = euclidean_distance(yx_val, yy_val, val_pred_x, val_pred_y)
+    print(f"\n[Validation Result] Distance: {val_dist:.4f}m")
 
     print("\nTraining full models on all data...")
     params_no_es = dict(params)
@@ -95,9 +96,8 @@ def main() -> None:
     full_y.fit(X, y_y, verbose=False)
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    full_x.get_booster().save_model(str(MODEL_DIR / "xgb_full_x.json"))
-    full_y.get_booster().save_model(str(MODEL_DIR / "xgb_full_y.json"))
-    (MODEL_DIR / "feature_columns.txt").write_text("\n".join(feature_cols))
+    full_x.get_booster().save_model(str(MODEL_DIR / "xgb_full_x_8020.json"))
+    full_y.get_booster().save_model(str(MODEL_DIR / "xgb_full_y_8020.json"))
 
     importances = full_x.feature_importances_
     feature_names = X.columns
@@ -106,6 +106,9 @@ def main() -> None:
     print("\nTop 20 Feature Importances (X-coordinate):")
     for idx in indices[::-1]:
         print(f"  {feature_names[idx]}: {importances[idx]:.6f}")
+
+    print("\n=== Training Complete ===")
+    print(f"Validation Distance: {val_dist:.4f}m")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ Router 진단 스크립트
 2. Expert Loss Attribution (L_A vs L_B)
 """
 
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -19,12 +20,36 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 def main():
+    parser = argparse.ArgumentParser(description="Router diagnostic for FiLM+Spatial MoE")
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=MODEL_PATH,
+        help="Checkpoint path (default: open_track1/film_smoe_transformer.pt)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=ROOT_DIR,
+        help="Output directory for plots (default: repo root)",
+    )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default="",
+        help="Optional tag suffix for output filenames (e.g., _fold0)",
+    )
+    args = parser.parse_args()
+    model_path = args.model_path
+    out_dir = args.out_dir
+    tag = args.tag
+
     print("=" * 70)
     print("Router 정밀 진단")
     print("=" * 70)
 
     # 1. 체크포인트 로드
-    checkpoint = torch.load(MODEL_PATH, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
 
     # 모델 재구성 (train_film_smoe2와 동일 파이프라인 사용)
     from train_film_smoe2 import (
@@ -228,9 +253,9 @@ def main():
     print(f"  해석: {'양의 상관 (올바른 방향)' if corr > 0 else '음의 상관 또는 무관'}")
 
     plt.tight_layout()
-    output_path = Path(__file__).resolve().parent / "router_diagnosis.png"
+    output_path = out_dir / f"router_diagnosis{tag}.png"
     plt.savefig(output_path, dpi=150)
-    print(f"\n히트맵 저장: /workspace/SoccerPredict/router_diagnosis.png")
+    print(f"\n히트맵 저장: {output_path}")
 
     # =========================================================================
     # 진단 3: Grid-based Gate 히트맵 (합성 데이터)
@@ -280,9 +305,9 @@ def main():
 
     plt.colorbar(im, ax=ax, label='Gate (0=InField, 1=Boundary)')
     plt.tight_layout()
-    output_path = Path(__file__).resolve().parent / "router_grid_heatmap.png"
+    output_path = out_dir / f"router_grid_heatmap{tag}.png"
     plt.savefig(output_path, dpi=150)
-    print(f"Grid 히트맵 저장: /workspace/SoccerPredict/router_grid_heatmap.png")
+    print(f"Grid 히트맵 저장: {output_path}")
 
     # Grid 통계
     print(f"\n[Grid Gate 통계]")
