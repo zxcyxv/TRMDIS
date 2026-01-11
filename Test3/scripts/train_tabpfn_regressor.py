@@ -27,8 +27,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "open_track1"
 MODEL_DIR = ROOT_DIR / "models"
 K8_PATH = DATA_DIR / "train_features_k8.csv"
-GATE_PATH = DATA_DIR / "xgb_hybrid_features.csv"
-PCA_PATH = DATA_DIR / "cls_pca_train.csv"
+GATE_PATH = DATA_DIR / "xgb_hybrid_features_oof.csv"
+PCA_PATH = DATA_DIR / "cls_pca_train_oof.csv"
 
 
 def euclidean_distance(y_true_x, y_true_y, y_pred_x, y_pred_y):
